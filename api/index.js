@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import connectDb from "./config/db.js";
 import { createClient } from "redis";
+import cookieParser from "cookie-parser";
 
 // routes
 import userRoutes from "./routes/user.js";
@@ -31,6 +32,7 @@ const startServer = async () => {
 
     // Middleware
     app.use(express.json());
+    app.use(cookieParser());
 
     // Routes
     app.use("/api/v1", userRoutes);
