@@ -10,6 +10,8 @@ import sendMail from "../config/sendMail.js";
 import { safeParse } from "zod";
 import {
   generateAccessToken,
+  generateToken,
+  revokeRefreshToken,
   verifyRefreshToken,
 } from "../config/tokenGeneration.js";
 
@@ -135,7 +137,7 @@ export const loginUser = tryCatch(async (req, res) => {
           }))
         : [];
 
-    const firstErrorMessage = allError[0]?.message || "validation failed";
+    const firstErrorMessage = allErrors[0]?.message || "validation failed";
 
     return res.status(400).json({
       message: firstErrorMessage,
@@ -143,17 +145,19 @@ export const loginUser = tryCatch(async (req, res) => {
     });
   }
 
+  const { email, password } = validatedBody.data;
+
   const rateLimitKey = `login-rate-limit:${req.ip}:${email}`;
 
-  if (redisClient.get(rateLimitKey)) {
+  const rateLimited = await redisClient.get(rateLimitKey);
+
+  if (rateLimited) {
     return res.status(429).json({
       message: "Too many login attempts,please try again",
     });
   }
 
-  const { email, password } = validatedBody.data;
-
-  const user = User.findOne({ email });
+  const user = await User.findOne({ email });
   if (!user) {
     return res.status(400).json({
       message: "Wrong credentials",
@@ -186,6 +190,41 @@ export const loginUser = tryCatch(async (req, res) => {
   });
 });
 
+export const verifyOtp = tryCatch(async (req, res) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    return res.status(400).json("Please enter the otp");
+  }
+
+  const otpKey = `otp:${email}`;
+
+  const redisStoredOtp = await redisClient.get(otpKey);
+
+  if (!redisStoredOtp) {
+    return res.status(400).json({
+      message: "Otp has been expired",
+    });
+  }
+
+  if (otp !== redisStoredOtp) {
+    return res.status(400).json({
+      message: "Wrong otp",
+    });
+  }
+
+  await redisClient.del(otpKey);
+
+  let user = await User.findOne({ email });
+
+  await generateToken(user._id, res);
+
+  res.status(200).json({
+    message: "Welcome,you have successfully logged in",
+    user,
+  });
+});
+
 export const myProfile = tryCatch((req, res) => {
   const user = req.user;
 
@@ -196,7 +235,8 @@ export const refreshAccessToken = async (req, res) => {
   const token = req.cookies.refreshToken;
 
   if (!token) {
-    res.status(401).json({
+    return res.status(401).json({
+      // ✅ Added return
       message: "Refresh token not found",
     });
   }
@@ -204,12 +244,12 @@ export const refreshAccessToken = async (req, res) => {
   const decode = await verifyRefreshToken(token);
 
   if (!decode) {
-    res.status(401).json({
+    return res.status(401).json({
       message: "Refresh token invalid",
     });
   }
 
-  generateAccessToken(decode.id, res);
+  await generateAccessToken(decode.id, res);
 
   res.status(200).json({
     message: "Token refreshed",
@@ -221,12 +261,18 @@ export const logOutUser = tryCatch(async (req, res) => {
 
   await revokeRefreshToken(userId);
 
-  res.clearCookie("accessToken");
-  res.clearCookie("refreshToken");
+  const cookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  };
+
+  res.clearCookie("accessToken", cookieOptions);
+  res.clearCookie("refreshToken", cookieOptions);
 
   await redisClient.del(`user:${userId}`);
 
   res.json({
-    message: "Log out successfully",
+    message: "Logged out successfully",
   });
 });

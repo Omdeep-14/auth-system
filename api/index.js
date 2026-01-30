@@ -3,6 +3,8 @@ import dotenv from "dotenv";
 import connectDb from "./config/db.js";
 import userRoutes from "./routes/userRoutes.js";
 import { createClient } from "redis";
+import cors from "cors";
+import cookieParser from "cookie-parser";
 
 dotenv.config();
 const app = express();
@@ -33,6 +35,14 @@ const startServer = async () => {
 
     //middleware
     app.use(express.json());
+    app.use(cookieParser());
+    app.use(
+      cors({
+        origin: process.env.FRONTEND_URL,
+        credentials: true,
+        methods: ["GET", "POST", "DELETE", "PUT", "OPTIONS"],
+      }),
+    );
 
     //routes
     app.use("/api/user", userRoutes);

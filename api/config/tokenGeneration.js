@@ -1,7 +1,5 @@
 import jwt from "jsonwebtoken";
-import { redisClient } from "..";
-import { refreshToken } from "../../../../New folder/auth-system/api/controllers/user";
-import tryCatch from "../middleware/tryCatch";
+import { redisClient } from "../index.js";
 
 export const generateToken = async (id, res) => {
   const refreshToken = jwt.sign({ id }, process.env.REFRESH_TOKEN, {
@@ -9,24 +7,27 @@ export const generateToken = async (id, res) => {
   });
 
   const accessToken = jwt.sign({ id }, process.env.ACCESS_TOKEN, {
-    expiresIn: "3min",
+    expiresIn: "3m", // Fixed: "3m" not "3min"
   });
 
   const refreshTokenKey = `refreshTokenKey:${id}`;
 
   await redisClient.setEx(refreshTokenKey, 7 * 24 * 60 * 60, refreshToken);
 
+  // Use environment variable to determine secure setting
+  const isProduction = process.env.NODE_ENV === "production";
+
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    // secure: true,
-    sameSite: "none",
+    secure: isProduction, // true in production, false in dev
+    sameSite: isProduction ? "none" : "lax", // "none" for cross-origin in prod
     maxAge: 3 * 60 * 1000,
   });
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    // secure: true,
-    sameSite: "none",
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 
@@ -47,23 +48,31 @@ export const verifyRefreshToken = async (refreshToken) => {
 
     return null;
   } catch (error) {
+    console.error("Refresh token verification failed:", error);
     return null;
   }
 };
 
 export const generateAccessToken = async (id, res) => {
   const accessToken = jwt.sign({ id }, process.env.ACCESS_TOKEN, {
-    expiresIn: "3min",
+    expiresIn: "3m", // Fixed: "3m" not "3min"
   });
+
+  const isProduction = process.env.NODE_ENV === "production";
 
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    // secure: false,
-    sameSite: "none",
+    secure: isProduction, // Must be true if sameSite is "none"
+    sameSite: isProduction ? "none" : "lax",
     maxAge: 3 * 60 * 1000,
   });
 };
 
 export const revokeRefreshToken = async (userId) => {
-  redisClient.del(`refreshTokenKey:${userId}`);
+  try {
+    await redisClient.del(`refreshTokenKey:${userId}`); // Added await
+  } catch (error) {
+    console.error("Failed to revoke refresh token:", error);
+    throw error; // Re-throw so caller knows it failed
+  }
 };
