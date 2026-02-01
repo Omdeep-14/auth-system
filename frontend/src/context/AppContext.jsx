@@ -18,7 +18,7 @@ export const AppProvider = ({ children }) => {
   const fetchUser = useCallback(async () => {
     try {
       const { data } = await api.get("/api/user/me");
-      setUser(data);
+      setUser(data.user);
       setIsAuth(true);
     } catch (error) {
       console.error("Failed to fetch user:", error);
@@ -29,12 +29,13 @@ export const AppProvider = ({ children }) => {
     }
   }, []);
 
-  async function logOutUser() {
+  async function logOutUser(navigate) {
     try {
       const { data } = await api.post(`/api/user/logout`);
       toast.success(data.message);
       setUser(null);
       setIsAuth(false);
+      navigate("/login");
     } catch (error) {
       toast.error("Something went wrong");
     }

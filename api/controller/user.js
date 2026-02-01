@@ -14,6 +14,7 @@ import {
   revokeRefreshToken,
   verifyRefreshToken,
 } from "../config/tokenGeneration.js";
+import { generateCSRFToken } from "../config/csrfMiddleware.js";
 
 export const registerUser = tryCatch(async (req, res) => {
   const sanitizedBody = sanitize(req.body);
@@ -217,18 +218,36 @@ export const verifyOtp = tryCatch(async (req, res) => {
 
   let user = await User.findOne({ email });
 
-  await generateToken(user._id, res);
+  const tokenData = await generateToken(user._id, res);
 
   res.status(200).json({
     message: "Welcome,you have successfully logged in",
     user,
+    sessionInfo: {
+      sessionId: tokenData.sessionId,
+      loginTime: new Date().toISOString(),
+      csrfToken: tokenData.csrfToken,
+    },
   });
 });
 
-export const myProfile = tryCatch((req, res) => {
+export const myProfile = tryCatch(async (req, res) => {
   const user = req.user;
 
-  res.json(user);
+  const sessionId = req.sessionId;
+  const sessionData = await redisClient.get(`session:${sessionId}`);
+
+  let sessionInfo = null;
+  if (sessionData) {
+    const parsedSession = JSON.parse(sessionData);
+    sessionInfo = {
+      sessionId,
+      loginTime: parsedSession.createdAt,
+      lastActivity: parsedSession.lastActivity,
+    };
+  }
+
+  res.json({ user, sessionInfo });
 });
 
 export const refreshAccessToken = async (req, res) => {
@@ -236,20 +255,28 @@ export const refreshAccessToken = async (req, res) => {
 
   if (!token) {
     return res.status(401).json({
-      // ✅ Added return
       message: "Refresh token not found",
     });
   }
 
   const decode = await verifyRefreshToken(token);
+  const cookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  };
 
   if (!decode) {
+    res.clearCookie("accessToken", cookieOptions);
+    res.clearCookie("refreshToken", cookieOptions);
+    res.clearCookie("csrfToken", cookieOptions);
+
     return res.status(401).json({
-      message: "Refresh token invalid",
+      message: "Session Expired",
     });
   }
 
-  await generateAccessToken(decode.id, res);
+  await generateAccessToken(decode.id, decode.sessionId, res);
 
   res.status(200).json({
     message: "Token refreshed",
@@ -269,10 +296,28 @@ export const logOutUser = tryCatch(async (req, res) => {
 
   res.clearCookie("accessToken", cookieOptions);
   res.clearCookie("refreshToken", cookieOptions);
+  res.clearCookie("csrfToken", cookieOptions);
 
   await redisClient.del(`user:${userId}`);
 
   res.json({
     message: "Logged out successfully",
+  });
+});
+
+export const refreshCSRF = tryCatch(async (req, res) => {
+  const userId = req.user._id;
+
+  const newCSRFToken = await generateCSRFToken(userId, res);
+
+  res.json({
+    message: "CSRF token refreshed",
+    csrfToken: newCSRFToken,
+  });
+});
+
+export const adminController = tryCatch(async (req, res) => {
+  res.json({
+    message: "Hello admin",
   });
 });

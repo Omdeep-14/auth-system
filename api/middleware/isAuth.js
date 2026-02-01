@@ -1,3 +1,4 @@
+import { isSessionActive } from "../config/tokenGeneration.js";
 import { redisClient } from "../index.js";
 import { User } from "../model/user.model.js";
 import jwt from "jsonwebtoken";
@@ -11,12 +12,34 @@ export const isAuth = async (req, res, next) => {
       });
     }
 
-    const decodedData = jwt.verify(token, process.env.ACCESS_TOKEN); // ✅ Fixed!
+    const decodedData = jwt.verify(token, process.env.ACCESS_TOKEN);
+
+    const sessionActive = await isSessionActive(
+      decodedData.id,
+      decodedData.sessionId,
+    );
+
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    };
+
+    if (!sessionActive) {
+      res.clearCookie("accessToken", cookieOptions);
+      res.clearCookie("refreshToken", cookieOptions);
+      res.clearCookie("csrfToken", cookieOptions);
+
+      return res.status(401).json({
+        message: "Session Expired,you have been logged in from another device",
+      });
+    }
 
     const cacheUser = await redisClient.get(`user:${decodedData.id}`);
 
     if (cacheUser) {
       req.user = JSON.parse(cacheUser);
+      req.sessionId = decodedData.sessionId;
       return next();
     }
 
@@ -31,6 +54,7 @@ export const isAuth = async (req, res, next) => {
     await redisClient.setEx(`user:${user._id}`, 3600, JSON.stringify(user));
 
     req.user = user;
+    req.sessionId = decodedData.sessionId;
     next();
   } catch (error) {
     if (
@@ -45,4 +69,16 @@ export const isAuth = async (req, res, next) => {
       message: error.message,
     });
   }
+};
+
+export const authorizedAdmin = async (req, res, next) => {
+  const user = req.user;
+
+  if (user.role !== "admin") {
+    return res.status(401).json({
+      message: "Access denied",
+    });
+  }
+
+  next();
 };
